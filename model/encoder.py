@@ -231,7 +231,7 @@ class DenseNet2d(nn.Module):
         efficient (bool) - set to True to use checkpointing. Much more memory efficient, but slower.
     """
 
-    def __init__(self, input_channel=3, growth_rate=12, block_config=(6, 12, 24, 16), compression=0.5,
+    def __init__(self, input_channel=1, growth_rate=6, block_config=(6, 12, 24, 16), compression=0.5,
                  num_init_features=24, bn_size=4, drop_rate=float(0), small_inputs=False, efficient=True):
 
         super(DenseNet2d, self).__init__()
@@ -240,6 +240,9 @@ class DenseNet2d(nn.Module):
         if small_inputs:
             self.encoder = nn.Sequential(OrderedDict([
                 ('conv0', nn.Conv2d(input_channel, num_init_features, kernel_size=3, stride=1, padding=1, bias=False)),
+                ('norm0', nn.BatchNorm2d(num_init_features)),
+                ('relu0', nn.ReLU(inplace=True)),
+                ('pool0', nn.MaxPool2d(kernel_size=3, stride=2, padding=1, ceil_mode=False))
             ]))
         else:
             """
@@ -300,15 +303,15 @@ if __name__ == "__main__":
     import os
 
     os.environ['CUDA_VISIBLE_DEVICES'] = '3'
-    # d = DenseNet3d()
-    # d = d.cuda()
-    # a = torch.randn(4, 1, 64, 64, 64)
-    # a = a.cuda()
-    # feature = d(a)
-    # print(feature.size())
-    network = DenseNet3d(input_channel=1,small_inputs=True)
-    network = network.cuda()
-    input_data = torch.randn(1, 1, 32, 48,48)
-    input_data = input_data.cuda()
-    features = network(input_data)
-    print(features.size())
+    d = DenseNet2d()
+    d = d.cuda()
+    a = torch.randn(1, 1, 540, 1503)
+    a = a.cuda()
+    feature = d(a)
+    print(feature.size())
+    # network = DenseNet3d(input_channel=1,small_inputs=True)
+    # network = network.cuda()
+    # input_data = torch.randn(1, 1, 32, 48,48)
+    # input_data = input_data.cuda()
+    # features = network(input_data)
+    # print(features.size())

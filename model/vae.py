@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from encoder import DenseNet2d, DenseNet3d
-from decoder import DenseDecoder3D, DenseDecoder2D
+from decoder import Decoder3D, Decoder2D
 import numpy as np
 
 
@@ -24,8 +24,8 @@ class VAE3d(nn.Module):
                                     latent_space_dim)
         self.z_log_sigma_map = nn.Linear(
             384 * (initial_feature_size[0] * initial_feature_size[1] * initial_feature_size[2]), latent_space_dim)
-        self.decoder = DenseDecoder3D(initial_feature_size=initial_feature_size, latent_feature_size=latent_space_dim,
-                                      small_inputs=small_inputs)
+        self.decoder = Decoder3D(initial_feature_size=initial_feature_size, latent_feature_size=latent_space_dim,
+                                 small_inputs=small_inputs)
 
     def _sample_latent(self, features):
         """
@@ -35,7 +35,8 @@ class VAE3d(nn.Module):
         log_sigma = self.z_log_sigma_map(features)
         sigma = torch.exp(log_sigma)
         std_z = torch.from_numpy(np.random.normal(0, 1, size=sigma.size())).float()
-        std_z = std_z.cuda()
+        if features.is_cuda:
+            std_z = std_z.cuda()
         self.z_mean = mu
         self.z_sigma = sigma
         self.z_log_sigma = log_sigma
@@ -56,13 +57,13 @@ class VAE2d(nn.Module):
         input_channel,small_inputs: parameters in DenseNet3d
     """
 
-    def __init__(self, latent_space_dim=128, input_channel=3, small_inputs=False, initial_feature_size=[8, 12]):
+    def __init__(self, latent_space_dim=128, input_channel=1, small_inputs=True, initial_feature_size=list([23, 29])):
         super(VAE2d, self).__init__()
         self.encoder = DenseNet2d(input_channel=input_channel, small_inputs=small_inputs)
-        self.z_mean_map = nn.Linear(384 * (initial_feature_size[0] * initial_feature_size[1]), latent_space_dim)
-        self.z_log_sigma_map = nn.Linear(384 * (initial_feature_size[0] * initial_feature_size[1]), latent_space_dim)
-        self.decoder = DenseDecoder2D(initial_feature_size=initial_feature_size, latent_feature_size=latent_space_dim,
-                                      small_inputs=small_inputs, num_input_channels=input_channel)
+        self.z_mean_map = nn.Linear(193 * (initial_feature_size[0] * initial_feature_size[1]), latent_space_dim)
+        self.z_log_sigma_map = nn.Linear(193 * (initial_feature_size[0] * initial_feature_size[1]), latent_space_dim)
+        self.decoder = Decoder2D(initial_feature_size=initial_feature_size, latent_feature_size=latent_space_dim,
+                                 small_inputs=small_inputs, num_input_channels=input_channel)
 
     def _sample_latent(self, features):
         """
@@ -83,6 +84,8 @@ class VAE2d(nn.Module):
         features = features.view(x.size(0), -1)
         z = self._sample_latent(features)
         x_reconstructed = self.decoder(z)
+        # x_reconstructed = F.interpolate(x_reconstructed, size=[540, 1503], mode="bilinear", align_corners=True)
+        x_reconstructed = torch.sigmoid(x_reconstructed)
         return x_reconstructed
 
 
@@ -102,9 +105,9 @@ if __name__ == "__main__":
     # x = x.cuda()
     # x_reconstructed = vae3d(x)
     # print(x_reconstructed.size())
-    vae2d = VAE2d()
-    vae2d=vae2d.cuda()
-    x = torch.randn(2, 3,512,768)
+    vae2d = VAE2d(latent_space_dim=32)
+    vae2d = vae2d.cuda()
+    x = torch.randn(1, 1, 368, 464)
     x = x.cuda()
     x_reconstructed = vae2d(x)
     print(x_reconstructed.size())

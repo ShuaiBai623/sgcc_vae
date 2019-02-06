@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from encoder import DenseNet2d, DenseNet3d
-from decoder import DenseDecoder3D, DenseDecoder2D
+from decoder import Decoder3D, Decoder2D
 import numpy as np
 
 
@@ -19,8 +19,8 @@ class AE3d(nn.Module):
         self.encoder = DenseNet3d(input_channel=input_channel, small_inputs=small_inputs)
         self.z_map = nn.Linear(384 * (initial_feature_size[0] * initial_feature_size[1] * initial_feature_size[2]),
                                latent_space_dim)
-        self.decoder = DenseDecoder3D(initial_feature_size=initial_feature_size, latent_feature_size=latent_space_dim,
-                                      small_inputs=small_inputs)
+        self.decoder = Decoder3D(initial_feature_size=initial_feature_size, latent_feature_size=latent_space_dim,
+                                 small_inputs=small_inputs)
 
     def _sample_latent(self, features):
         z = self.z_map(features)

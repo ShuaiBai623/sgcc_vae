@@ -153,8 +153,8 @@ class _DenseBlock2D(nn.Module):
         return torch.cat(output_features, 1)
 
 
-class DenseDecoder2D(nn.Module):
-    def __init__(self, initial_feature_size, num_init_features=24, growth_rate=12, encoder_block_config=(6, 12, 24, 16),
+class Decoder2D(nn.Module):
+    def __init__(self, initial_feature_size, num_init_features=24, growth_rate=6, encoder_block_config=(6, 12, 24, 16),
                  compression=0.5, drop_rate=float(0), num_input_channels=3, latent_feature_size=128,
                  small_inputs=False):
         """
@@ -166,7 +166,7 @@ class DenseDecoder2D(nn.Module):
         :param latent_feature_size: the dim for latent space
         :param small_inputs: the flag for if the input is small(will change the final progress)
         """
-        super(DenseDecoder2D, self).__init__()
+        super(Decoder2D, self).__init__()
         assert 0 < compression <= 1, 'compression of densenet should be between 0 and 1'
         self.initial_feature_size = initial_feature_size
         self.decoder_channel_list = self.calculate_channel_number(num_init_features, encoder_block_config, growth_rate,
@@ -175,9 +175,9 @@ class DenseDecoder2D(nn.Module):
         # build the transform from latent space to feature space
         self.latent_linear_map = nn.Linear(latent_feature_size, self.decoder_channel_list[-1] * (
                 initial_feature_size[0] * initial_feature_size[1]))
-        self.decoder.add_module("pre_deconv", nn.ConvTranspose2d(self.decoder_channel_list[-1],
-                                                                 out_channels=self.decoder_channel_list[-1],
-                                                                 kernel_size=2, stride=2, padding=0))
+        # self.decoder.add_module("pre_deconv", nn.ConvTranspose2d(self.decoder_channel_list[-1],
+        #                                                          out_channels=self.decoder_channel_list[-1],
+        #                                                          kernel_size=2, stride=2, padding=0))
         for i in range(len(self.decoder_channel_list) - 1, 0, -1):
             detrans_block = _DeTrainsition2D(self.decoder_channel_list[i], self.decoder_channel_list[i - 1], drop_rate)
             self.decoder.add_module("detrans_block%d" % (len(self.decoder_channel_list) - i), detrans_block)
@@ -190,6 +190,8 @@ class DenseDecoder2D(nn.Module):
                 ("final_relu0", nn.ReLU()),
                 ('final_conv0', nn.Conv2d(self.decoder_channel_list[0], out_channels=num_init_features,
                                           kernel_size=3, stride=1, padding=1, bias=False)),
+                ("final_deconv0", nn.ConvTranspose2d(num_init_features, out_channels=num_init_features,
+                                                     kernel_size=2, stride=2, padding=0)),
                 ("final_norm1", nn.BatchNorm2d(num_init_features)),
                 ("final_relu1", nn.ReLU()),
                 ('final_conv1', nn.Conv2d(num_init_features, out_channels=num_input_channels,
@@ -210,8 +212,7 @@ class DenseDecoder2D(nn.Module):
                 ('final_conv1', nn.Conv2d(num_init_features, out_channels=num_input_channels,
                                           kernel_size=3, stride=1, padding=1, bias=False)),
                 ("final_deconv1", nn.ConvTranspose2d(num_input_channels, out_channels=num_input_channels,
-                                                     kernel_size=2, stride=2, padding=0)),
-                ("sigmoid", nn.Sigmoid())
+                                                     kernel_size=2, stride=2, padding=0))
             ]))
         self.decoder.add_module("final_process", decode_final_process)
         for name, param in self.named_parameters():
@@ -248,12 +249,12 @@ class DenseDecoder2D(nn.Module):
             channel += growth_rate * layer_num
             channel *= compression
             channel_number_list.append(int(channel))
-        if final_compression_flag:
+        if not final_compression_flag:
             channel_number_list[-1] = int(channel_number_list[-1] / compression)
         return channel_number_list
 
 
-class DenseDecoder3D(nn.Module):
+class Decoder3D(nn.Module):
     def __init__(self, initial_feature_size, num_init_features=24, growth_rate=12, encoder_block_config=(6, 12, 24, 16),
                  compression=0.5, drop_rate=float(0), num_input_channels=1, latent_feature_size=128, small_inputs=True):
         """
@@ -264,7 +265,7 @@ class DenseDecoder3D(nn.Module):
         :param num_input_channels: the image's channels, 2d usually 3
         :param latent_feature_size: the dim for latent space
         """
-        super(DenseDecoder3D, self).__init__()
+        super(Decoder3D, self).__init__()
         assert 0 < compression <= 1, 'compression of densenet should be between 0 and 1'
         self.initial_feature_size = initial_feature_size
         self.decoder_channel_list = self.calculate_channel_number(num_init_features, encoder_block_config, growth_rate,
@@ -363,7 +364,7 @@ if __name__ == "__main__":
     # feature = d(a)
     # print(feature.size())
     # network = DenseDecoder2D(initial_feature_size=[8, 8],small_input=False)
-    network = DenseDecoder3D(initial_feature_size=[4, 6, 6], small_inputs=True)
+    network = Decoder3D(initial_feature_size=[4, 6, 6], small_inputs=True)
     network = network.cuda()
     input_data = torch.randn(4, 128)
     input_data = input_data.cuda()

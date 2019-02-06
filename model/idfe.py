@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as cp
 from collections import OrderedDict
 from encoder import DenseNet2d, DenseNet3d
-from decoder import DenseDecoder3D, DenseDecoder2D
+from decoder import Decoder3D, Decoder2D
 
 
 class IdFe3d(DenseNet3d):
