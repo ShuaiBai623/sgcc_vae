@@ -43,9 +43,9 @@ def arg_as_list(s):
 parser = argparse.ArgumentParser(description='pytorch training hiearachical vae')
 parser.add_argument('--dataset', default="sgcc_dataset", type=str, metavar='DataPath',
                     help='The folder path of dataset')
-parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
+parser.add_argument('-j', '--workers', default=64, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
-parser.add_argument('--epochs', default=1200, type=int, metavar='N',
+parser.add_argument('--epochs', default=1000, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -55,7 +55,7 @@ parser.add_argument('-t', '--train-time', default=1, type=int,
                     metavar='N', help='the x-th time of training')
 parser.add_argument('--lr', '--learning-rate', default=1e-8, type=float,
                     metavar='LR', help='initial learning rate')
-parser.add_argument('-akb', '--adjust-kl-beta-epoch', default=300, type=float, metavar='KL Beta',
+parser.add_argument('-akb', '--adjust-kl-beta-epoch', default=200, type=float, metavar='KL Beta',
                     help='the epoch to linear adjust kl beta')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
@@ -73,12 +73,12 @@ parser.add_argument('-pm', '-pretrained-resume', default='', type=str, metavar='
                     help='path to pretrained parameters (default: none)')
 # parser.add_argument('-ld', '--latent-dim', default=128, type=int,
 #                     metavar='D', help='feature dimension in latent space')
-parser.add_argument('-ld', "--latent-dim", default=[64, 64, 64, 64], type=arg_as_list,
+parser.add_argument('-ld', "--latent-dim", default=[64, 64, 64], type=arg_as_list,
                     metavar='D List', help='feature dimension in latent space for each hierarchical')
 # This may be used later
 # parser.add_argument('--nce-m', default=0.5, type=float,
 #                     help='momentum for non-parametric updates')
-parser.add_argument('-ad', "--adjust-lr", default=[800, 1000], type=arg_as_list,
+parser.add_argument('-ad', "--adjust-lr", default=[600, 8000], type=arg_as_list,
                     help="The milestone list for adjust learning rate")
 parser.add_argument('-a', '--aug-prob', default=0, type=float,
                     help='the probability of augmentation')
@@ -148,7 +148,7 @@ def main():
     lr = args.lr
     for epoch in range(args.start_epoch, args.epochs):
         lr = adjust_learning_rate(lr, optimizer, epoch)
-        kl_beta = min(1, epoch / args.adjust_kl_beta_epoch)
+        kl_beta = max(1 / args.adjust_kl_beta_epoch,min(1, epoch / args.adjust_kl_beta_epoch))
         epoch_total_loss, epoch_reconstruct_loss, epoch_kl_loss = train(train_dloader, model=model, criterion=criterion,
                                                                         optimizer=optimizer, epoch=epoch, writer=writer,
                                                                         dataset=args.dataset, kl_beta=kl_beta)
@@ -238,10 +238,10 @@ def train(train_dloader, model, criterion, optimizer, epoch, writer, dataset, kl
 
 def adjust_learning_rate(lr, optimizer, epoch):
     """Sets the learning rate to the initial LR decayed by 10 every 100 epochs"""
-    kl_beta = min(1, epoch / args.adjust_kl_beta_epoch)
+    # lr_beta = min(1, 100*epoch / args.adjust_kl_beta_epoch)
     if epoch < args.adjust_lr[0]:
         # lr = args.lr / max(kl_beta, 1 / args.adjust_kl_beta_epoch)
-        lr = lr * 10 / max(kl_beta, 1 / args.adjust_kl_beta_epoch)
+        lr = lr
     elif args.adjust_lr[0] <= epoch < args.adjust_lr[1]:
         lr = lr * 0.99
     else:

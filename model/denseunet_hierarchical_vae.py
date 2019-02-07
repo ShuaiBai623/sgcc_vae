@@ -24,8 +24,8 @@ class _PreProcess(nn.Sequential):
                                   bias=False))
         self.add_module('norm0', nn.BatchNorm2d(num_init_features))
         self.add_module('relu0', nn.ReLU(inplace=True))
-        # self.preprocess.add_module('pool0', nn.MaxPool2d(kernel_size=3, stride=2, padding=1,
-        #                                                  ceil_mode=False))
+        self.add_module('pool0', nn.MaxPool2d(kernel_size=3, stride=2, padding=1,
+                                                         ceil_mode=False))
 
 
 class _FinalProcess(nn.Sequential):
@@ -40,7 +40,9 @@ class _FinalProcess(nn.Sequential):
         self.add_module("final_norm1", nn.BatchNorm2d(num_init_features))
         self.add_module("final_relu1", nn.ReLU())
         self.add_module('final_conv1', nn.Conv2d(num_init_features, out_channels=num_input_channels,
-                                                 kernel_size=3, stride=1, padding=1, bias=True))
+                                                 kernel_size=3, stride=1, padding=1, bias=False))
+        self.add_module("final_deconv1", nn.ConvTranspose2d(num_input_channels, out_channels=num_input_channels,
+                                                            kernel_size=2, stride=2, padding=0, bias=True))
 
         self.add_module("sigmoid", nn.Sigmoid())
 
@@ -69,7 +71,7 @@ class _LatentVariableInference2d(nn.Module):
         Return the latent normal sample z ~ N(mu, sigma^2)
         """
         mu, log_sigma, sigma = self._inference(features)
-        std_z = torch.from_numpy(np.random.normal(0, 1, size=sigma.size())).float()
+        std_z = torch.randn(sigma.size())
         if features.is_cuda:
             std_z = std_z.cuda()
         return mu + sigma * std_z
@@ -89,9 +91,9 @@ class _LatentVariableInference2d(nn.Module):
 
 
 class DenseUnetHiearachicalVAE(nn.Module):
-    def __init__(self, num_input_channels=1, growth_rate=12, block_config=(6, 12, 24, 16), compression=0.5,
+    def __init__(self, num_input_channels=1, growth_rate=12, block_config=(6, 12, 24), compression=0.5,
                  num_init_features=24, bn_size=4, drop_rate=float(0), efficient=False,
-                 latent_dim=[64, 64, 64, 64], img_size=[368, 464], data_parallel=True):
+                 latent_dim=[64, 64, 64], img_size=[368, 464], data_parallel=True):
         """
         :param num_input_channels: the channel of images to imput
         :param growth_rate: the middle feature for dense block
@@ -111,7 +113,8 @@ class DenseUnetHiearachicalVAE(nn.Module):
         if data_parallel:
             pre_process = nn.DataParallel(pre_process)
         self.encoder.add_module("pre_process", pre_process)
-        img_size = [s / 2 for s in img_size]
+        # img_size = [s / 2 for s in img_size]
+        img_size = [s / 4 for s in img_size]
         assert 0 < compression <= 1, 'compression of densenet should be between 0 and 1'
         # add dense block
         num_features = num_init_features
@@ -175,6 +178,11 @@ class DenseUnetHiearachicalVAE(nn.Module):
         for name, param in self.named_parameters():
             if 'conv' in name and 'weight' in name:
                 nn.init.xavier_normal_(param.data)
+            # initialize liner transform
+            elif 'map' in name and 'weight' in name:
+                nn.init.xavier_normal_(param.data)
+            elif 'map' in name and 'bias' in name:
+                param.data.fill_(0)
             # initialize the batch norm layer
             elif 'norm' in name and 'weight' in name:
                 param.data.fill_(1)
