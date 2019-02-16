@@ -19,6 +19,7 @@ class SGCCDataset(data.Dataset):
 
     def __getitem__(self, index):
         data_path = self._data_path_list[index]
+
         image = cv2.imread(data_path, 0)
         image_name = path.basename(data_path)[:-4]
         image = np.expand_dims(image, 0)

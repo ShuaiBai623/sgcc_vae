@@ -42,7 +42,7 @@ def arg_as_list(s):
 
 parser = argparse.ArgumentParser(description='pytorch training hiearachical vae')
 parser.add_argument('--dataset', default="sgcc_dataset", type=str, metavar='DataPath',
-                    help='The folder path of dataset')
+                    help='The folder path of dataset can be sgcc_dataset or 25000Img')
 parser.add_argument('-j', '--workers', default=64, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument('--epochs', default=1000, type=int, metavar='N',
@@ -65,6 +65,7 @@ parser.add_argument('--print-freq', '-p', default=1, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
+parser.add_argument('--resume-arg', action='store_true', help='if we also resume the argument')
 parser.add_argument('--test-only', action='store_true', help='test only')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
@@ -75,6 +76,10 @@ parser.add_argument('-pm', '-pretrained-resume', default='', type=str, metavar='
 #                     metavar='D', help='feature dimension in latent space')
 parser.add_argument('-ld', "--latent-dim", default=[64, 64, 64], type=arg_as_list,
                     metavar='D List', help='feature dimension in latent space for each hierarchical')
+parser.add_argument('-is', "--image-size", default=[368, 464], type=arg_as_list,
+                    metavar='Image Size List', help='the size of h * w for image')
+parser.add_argument('-bc', "--block-config", default=[6, 12, 24], type=arg_as_list,
+                    metavar='Image Size List', help='the size of h * w for image')
 # This may be used later
 # parser.add_argument('--nce-m', default=0.5, type=float,
 #                     help='momentum for non-parametric updates')
@@ -104,8 +109,16 @@ def main():
     global args, best_prec1, min_avg_total_loss, min_avg_reconstruct_loss, min_avg_kl_loss
     args = parser.parse_args()
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
-    model = denseunet_hierarchical_vae.DenseUnetHiearachicalVAE(latent_dim=args.latent_dim,
-                                                                data_parallel=args.data_parallel)
+    # ugly if sentence to avoid some ugly situation:
+    # for we don't use args.image_size and args.block_config parameters in the first 10 train progress
+    if args.dataset == "sgcc_dataset" and args.train_time <= 10:
+        model = denseunet_hierarchical_vae.DenseUnetHiearachicalVAE(latent_dim=args.latent_dim,
+                                                                    data_parallel=args.data_parallel)
+    else:
+        model = denseunet_hierarchical_vae.DenseUnetHiearachicalVAE(latent_dim=args.latent_dim,
+                                                                    data_parallel=args.data_parallel,
+                                                                    img_size=args.image_size,
+                                                                    block_config=args.block_config)
     model = model.cuda()
     dataset_path = path.join("/data/fhz", args.dataset)
     data_path_list = glob(path.join(dataset_path, "*.png"))
@@ -122,7 +135,8 @@ def main():
         if os.path.isfile(args.resume):
             print("=> loading checkpoint '{}'".format(args.resume))
             checkpoint = torch.load(args.resume)
-            args = checkpoint['args']
+            if args.resume_arg:
+                args = checkpoint['args']
             min_avg_total_loss = checkpoint['min_avg_total_loss']
             min_avg_reconstruct_loss = checkpoint['min_avg_reconstruct_loss']
             min_avg_kl_loss = checkpoint['min_avg_kl_loss']
@@ -148,7 +162,7 @@ def main():
     lr = args.lr
     for epoch in range(args.start_epoch, args.epochs):
         lr = adjust_learning_rate(lr, optimizer, epoch)
-        kl_beta = max(1 / args.adjust_kl_beta_epoch,min(1, epoch / args.adjust_kl_beta_epoch))
+        kl_beta = max(1 / args.adjust_kl_beta_epoch, min(1, epoch / args.adjust_kl_beta_epoch))
         epoch_total_loss, epoch_reconstruct_loss, epoch_kl_loss = train(train_dloader, model=model, criterion=criterion,
                                                                         optimizer=optimizer, epoch=epoch, writer=writer,
                                                                         dataset=args.dataset, kl_beta=kl_beta)

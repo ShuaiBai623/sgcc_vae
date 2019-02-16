@@ -25,7 +25,7 @@ class _PreProcess(nn.Sequential):
         self.add_module('norm0', nn.BatchNorm2d(num_init_features))
         self.add_module('relu0', nn.ReLU(inplace=True))
         self.add_module('pool0', nn.MaxPool2d(kernel_size=3, stride=2, padding=1,
-                                                         ceil_mode=False))
+                                              ceil_mode=False))
 
 
 class _FinalProcess(nn.Sequential):
@@ -91,7 +91,7 @@ class _LatentVariableInference2d(nn.Module):
 
 
 class DenseUnetHiearachicalVAE(nn.Module):
-    def __init__(self, num_input_channels=1, growth_rate=12, block_config=(6, 12, 24), compression=0.5,
+    def __init__(self, num_input_channels=1, growth_rate=12, block_config=[6, 12, 24], compression=0.5,
                  num_init_features=24, bn_size=4, drop_rate=float(0), efficient=False,
                  latent_dim=[64, 64, 64], img_size=[368, 464], data_parallel=True):
         """
@@ -142,7 +142,7 @@ class DenseUnetHiearachicalVAE(nn.Module):
                 img_size = [s / 2 for s in img_size]
                 inference = _LatentVariableInference2d(input_size=img_size, latent_dim=latent_dim[i],
                                                        num_input_channels=num_features,
-                                                       num_output_channels=int(num_features / 2))
+                                                       num_output_channels=num_features)
             else:
                 trans = nn.BatchNorm2d(num_features)
                 if data_parallel:
@@ -159,11 +159,11 @@ class DenseUnetHiearachicalVAE(nn.Module):
                                                                   compression)
         self.decoder = nn.Sequential(OrderedDict([]))
         for i in range(len(self.decoder_channel_list) - 1, 0, -1):
-            decoder_block = _DecoderBlock2D(self.decoder_channel_list[i], int(self.decoder_channel_list[i - 1] / 2),
+            decoder_block = _DecoderBlock2D(self.decoder_channel_list[i], self.decoder_channel_list[i - 1],
                                             drop_rate)
-            decoder_deconv = nn.ConvTranspose2d(self.decoder_channel_list[i - 1],
+            decoder_deconv = nn.ConvTranspose2d(int(self.decoder_channel_list[i - 1] * 2),
                                                 out_channels=self.decoder_channel_list[i - 1],
-                                                kernel_size=2, stride=2, padding=0,bias=False)
+                                                kernel_size=2, stride=2, padding=0, bias=False)
             if data_parallel:
                 decoder_block = nn.DataParallel(decoder_block)
                 decoder_deconv = nn.DataParallel(decoder_deconv)
@@ -241,7 +241,7 @@ class DenseUnetHiearachicalVAE(nn.Module):
             raise ValueError("The hierarchical number of latent dim is not equal to z_list")
         inference_feature_list = []
         for i, z in enumerate(z_list):
-            inference_feature = getattr(self.inference, "latent_layer%d" % (i + 1)).decode_latent_variable(z)
+            inference_feature = getattr(self.inference, "latent_layer%d" % (i + 1)).module.decode_latent_variable(z)
             inference_feature_list.append(inference_feature)
         for i in range(len(z_list), 1, -1):
             if i == len(z_list):
@@ -276,3 +276,4 @@ class DenseUnetHiearachicalVAE(nn.Module):
         if not final_compression_flag:
             channel_number_list[-1] = int(channel_number_list[-1] / compression)
         return channel_number_list
+
