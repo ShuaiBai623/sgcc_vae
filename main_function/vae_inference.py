@@ -153,6 +153,26 @@ class HVAEInference(DenseUnetHiearachicalVAE):
         reconstruct = self.get_image_by_sample(z_input)
         return reconstruct
 
+    def get_inference_by_image(self, input_image):
+        """
+        :param input_image should be an batch_size*channel*h*w numpy array
+        :return: return mean with [layer1_mean,layer2_mean,layer3_mean], log_sigma with
+        [layer1_log_sigma,layer2_log_sigma,layer3_log_sigma],all items in list is an numpy array
+        with batch_size * latent_dim
+        """
+        input_image = torch.from_numpy(input_image).float()
+        if self.gpu_flag:
+            input_image = input_image.cuda()
+        output, latent_variable_mean_list, latent_variable_sigma_list, latent_variable_log_sigma_list = self.forward(
+            input_image)
+        mean_list = []
+        log_sigma_list = []
+        for mean_tensor in latent_variable_mean_list:
+            mean_list.append(mean_tensor.cpu().detach().numpy())
+        for log_sigma_tensor in latent_variable_log_sigma_list:
+            log_sigma_list.append(log_sigma_tensor.cpu().detach().numpy())
+        return mean_list, log_sigma_list
+
     def get_image_by_sample(self, z_sample):
         z_sample = torch.from_numpy(z_sample).float()
         if self.gpu_flag:

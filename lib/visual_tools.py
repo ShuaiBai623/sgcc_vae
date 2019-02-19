@@ -379,4 +379,5 @@ if __name__ == "__main__":
     #     visual3dcube(train_time=i)
     # visual3dcube(train_time=16)
     # visual_similarity(train_time=16)
-    visual2dsgcc(train_time=2,target_epoch=599)
+    # visual2dsgcc(dataset="25000Img",train_time=12,target_epoch=239)
+    visual2dsgcc(dataset="sgcc_dataset",train_time=10,target_epoch=1199)

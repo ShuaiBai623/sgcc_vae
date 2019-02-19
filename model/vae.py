@@ -59,7 +59,7 @@ class VAE2d(nn.Module):
 
     def __init__(self, latent_space_dim=128, input_channel=1, small_inputs=True, initial_feature_size=list([23, 29])):
         super(VAE2d, self).__init__()
-        self.encoder = DenseNet2d(input_channel=input_channel, small_inputs=small_inputs)
+        self.encoder = DenseNet2d(num_input_channels=input_channel, small_inputs=small_inputs)
         self.z_mean_map = nn.Linear(193 * (initial_feature_size[0] * initial_feature_size[1]), latent_space_dim)
         self.z_log_sigma_map = nn.Linear(193 * (initial_feature_size[0] * initial_feature_size[1]), latent_space_dim)
         self.decoder = Decoder2D(initial_feature_size=initial_feature_size, latent_feature_size=latent_space_dim,

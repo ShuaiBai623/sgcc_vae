@@ -29,7 +29,7 @@ class _PreProcess(nn.Sequential):
 
 
 class _FinalProcess(nn.Sequential):
-    def __init__(self, num_input_channels, num_init_features, num_feature_channels):
+    def __init__(self, num_input_channels, num_init_features, num_feature_channels, img_size):
         super(_FinalProcess, self).__init__()
         self.add_module("final_norm0", nn.BatchNorm2d(num_feature_channels))
         self.add_module("final_relu0", nn.ReLU())
@@ -43,8 +43,8 @@ class _FinalProcess(nn.Sequential):
                                                  kernel_size=3, stride=1, padding=1, bias=False))
         self.add_module("final_deconv1", nn.ConvTranspose2d(num_input_channels, out_channels=num_input_channels,
                                                             kernel_size=2, stride=2, padding=0, bias=True))
-
-        self.add_module("sigmoid", nn.Sigmoid())
+        # self.add_module("interpolate", nn.functional.interpolate(size=img_size, mode='bilinear', align_corners=True))
+        # self.add_module("sigmoid", nn.Sigmoid())
 
 
 class _LatentVariableInference2d(nn.Module):
@@ -91,9 +91,9 @@ class _LatentVariableInference2d(nn.Module):
 
 
 class DenseUnetHiearachicalVAE(nn.Module):
-    def __init__(self, num_input_channels=1, growth_rate=12, block_config=[6, 12, 24], compression=0.5,
+    def __init__(self, num_input_channels=1, growth_rate=12, block_config=[6, 12, 24, 16], compression=0.5,
                  num_init_features=24, bn_size=4, drop_rate=float(0), efficient=False,
-                 latent_dim=[64, 64, 64], img_size=[368, 464], data_parallel=True):
+                 latent_dim=[8, 8], img_size=[368, 464], data_parallel=True):
         """
         :param num_input_channels: the channel of images to imput
         :param growth_rate: the middle feature for dense block
@@ -109,6 +109,7 @@ class DenseUnetHiearachicalVAE(nn.Module):
         self.latent_dim = latent_dim
         self.encoder = nn.Sequential()
         self.inference = nn.Sequential()
+        self.img_size = tuple(img_size)
         pre_process = _PreProcess(num_input_channels, num_init_features)
         if data_parallel:
             pre_process = nn.DataParallel(pre_process)
@@ -139,21 +140,28 @@ class DenseUnetHiearachicalVAE(nn.Module):
                     trans = nn.DataParallel(trans)
                 self.encoder.add_module('transition%d' % (i + 1), trans)
                 num_features = int(num_features * compression)
-                img_size = [s / 2 for s in img_size]
-                inference = _LatentVariableInference2d(input_size=img_size, latent_dim=latent_dim[i],
-                                                       num_input_channels=num_features,
-                                                       num_output_channels=num_features)
+                img_size = [int(s / 2) for s in img_size]
+                if i >= len(block_config) - 2:
+                    inference = _LatentVariableInference2d(input_size=img_size,
+                                                           latent_dim=latent_dim[i - len(block_config)],
+                                                           num_input_channels=num_features,
+                                                           num_output_channels=num_features)
+                    if data_parallel:
+                        inference = nn.DataParallel(inference)
+                    self.inference.add_module('latent_layer%d' % (i + 1), inference)
+
             else:
                 trans = nn.BatchNorm2d(num_features)
                 if data_parallel:
                     trans = nn.DataParallel(trans)
                 self.encoder.add_module('transition%d' % (i + 1), trans)
-                inference = _LatentVariableInference2d(input_size=img_size, latent_dim=latent_dim[i],
+                inference = _LatentVariableInference2d(input_size=img_size,
+                                                       latent_dim=latent_dim[i - len(block_config)],
                                                        num_input_channels=num_features,
                                                        num_output_channels=num_features)
-            if data_parallel:
-                inference = nn.DataParallel(inference)
-            self.inference.add_module('latent_layer%d' % (i + 1), inference)
+                if data_parallel:
+                    inference = nn.DataParallel(inference)
+                self.inference.add_module('latent_layer%d' % (i + 1), inference)
 
         self.decoder_channel_list = self.calculate_channel_number(num_init_features, block_config, growth_rate,
                                                                   compression)
@@ -161,7 +169,7 @@ class DenseUnetHiearachicalVAE(nn.Module):
         for i in range(len(self.decoder_channel_list) - 1, 0, -1):
             decoder_block = _DecoderBlock2D(self.decoder_channel_list[i], self.decoder_channel_list[i - 1],
                                             drop_rate)
-            decoder_deconv = nn.ConvTranspose2d(int(self.decoder_channel_list[i - 1] * 2),
+            decoder_deconv = nn.ConvTranspose2d(int(self.decoder_channel_list[i - 1]),
                                                 out_channels=self.decoder_channel_list[i - 1],
                                                 kernel_size=2, stride=2, padding=0, bias=False)
             if data_parallel:
@@ -171,7 +179,7 @@ class DenseUnetHiearachicalVAE(nn.Module):
             self.decoder.add_module("decoder_block%d_deconv" % (i + 1), decoder_deconv)
         final_process = _FinalProcess(num_input_channels=num_input_channels,
                                       num_init_features=num_init_features,
-                                      num_feature_channels=self.decoder_channel_list[0])
+                                      num_feature_channels=self.decoder_channel_list[0], img_size=self.img_size)
         if data_parallel:
             final_process = nn.DataParallel(final_process)
         self.decoder.add_module("final_process", final_process)
@@ -198,22 +206,26 @@ class DenseUnetHiearachicalVAE(nn.Module):
         for i in range(len(self.block_config)):
             output = getattr(self.encoder, "denseblock%d" % (i + 1))(output)
             output = getattr(self.encoder, "transition%d" % (i + 1))(output)
-            inference_feature, z_mean, z_sigma, z_log_sigma = getattr(self.inference, "latent_layer%d" % (i + 1))(
-                output)
-            inference_feature_list.append(inference_feature)
-            latent_variable_mean_list.append(z_mean)
-            latent_variable_sigma_list.append(z_sigma)
-            latent_variable_log_sigma_list.append(z_log_sigma)
+            if i >= len(self.block_config) - 2:
+                inference_feature, z_mean, z_sigma, z_log_sigma = getattr(self.inference, "latent_layer%d" % (i + 1))(
+                    output)
+                inference_feature_list.append(inference_feature)
+                latent_variable_mean_list.append(z_mean)
+                latent_variable_sigma_list.append(z_sigma)
+                latent_variable_log_sigma_list.append(z_log_sigma)
         for i in range(len(self.decoder_channel_list), 1, -1):
             if i == len(self.decoder_channel_list):
-                output = getattr(self.decoder, "decoder_block%d" % i)(inference_feature_list[i - 1])
-                output = torch.cat((output, inference_feature_list[i - 2]), 1)
+                output = getattr(self.decoder, "decoder_block%d" % i)(
+                    inference_feature_list[i - 1 - len(self.decoder_channel_list)])
+                # output = torch.cat((output, inference_feature_list[i - 2]), 1)
+                output += inference_feature_list[i - 2 - len(self.decoder_channel_list)]
                 output = getattr(self.decoder, "decoder_block%d_deconv" % i)(output)
             else:
                 output = getattr(self.decoder, "decoder_block%d" % i)(output)
-                output = torch.cat((output, inference_feature_list[i - 2]), 1)
+                # output = torch.cat((output, inference_feature_list[i - 2]), 1)
                 output = getattr(self.decoder, "decoder_block%d_deconv" % i)(output)
         output = self.decoder.final_process(output)
+        output = torch.sigmoid(F.interpolate(output, size=self.img_size, mode='bilinear', align_corners=True))
         return output, latent_variable_mean_list, latent_variable_sigma_list, latent_variable_log_sigma_list
 
     def generate_from_raw_img(self, input_img, generate_times=1):
@@ -222,11 +234,10 @@ class DenseUnetHiearachicalVAE(nn.Module):
         :param generate_times:time to generate the reconstruct images
         :return: generate img with size generate_times * channel * h * w
         """
-        self.eval()
-        repeat_img = input_img.repeat(generate_times, 1, 1, 1)
-        reconstruct_img, latent_variable_mean_list, latent_variable_sigma_list, latent_variable_log_sigma_list = self.forward(
-            repeat_img)
-        self.train()
+        with torch.no_grad():
+            repeat_img = input_img.repeat(generate_times, 1, 1, 1)
+            reconstruct_img, latent_variable_mean_list, latent_variable_sigma_list, latent_variable_log_sigma_list = self.forward(
+                repeat_img)
         return reconstruct_img, latent_variable_mean_list, latent_variable_sigma_list, latent_variable_log_sigma_list
 
     def generate_from_latent_variable(self, z_list):
@@ -236,24 +247,26 @@ class DenseUnetHiearachicalVAE(nn.Module):
         the size of latent_layer_i_z is batch_size * latent_dim
         :return: batch_size * img_size reconstructed images
         """
-        self.eval()
-        if len(z_list) != len(self.latent_dim):
-            raise ValueError("The hierarchical number of latent dim is not equal to z_list")
-        inference_feature_list = []
-        for i, z in enumerate(z_list):
-            inference_feature = getattr(self.inference, "latent_layer%d" % (i + 1)).module.decode_latent_variable(z)
-            inference_feature_list.append(inference_feature)
-        for i in range(len(z_list), 1, -1):
-            if i == len(z_list):
-                output = getattr(self.decoder, "decoder_block%d" % i)(inference_feature_list[i - 1])
-                output = torch.cat((output, inference_feature_list[i - 2]), 1)
-                output = getattr(self.decoder, "decoder_block%d_deconv" % i)(output)
-            else:
-                output = getattr(self.decoder, "decoder_block%d" % i)(output)
-                output = torch.cat((output, inference_feature_list[i - 2]), 1)
-                output = getattr(self.decoder, "decoder_block%d_deconv" % i)(output)
-        output = self.decoder.final_process(output)
-        self.train()
+        with torch.no_grad():
+            if len(z_list) != len(self.latent_dim):
+                raise ValueError("The hierarchical number of latent dim is not equal to z_list")
+            inference_feature_list = []
+            for i, z in enumerate(z_list):
+                inference_feature = getattr(self.inference, "latent_layer%d" % (i + 3)).module.decode_latent_variable(z)
+                inference_feature_list.append(inference_feature)
+            for i in range(len(self.decoder_channel_list), 1, -1):
+                if i == len(self.decoder_channel_list):
+                    output = getattr(self.decoder, "decoder_block%d" % i)(
+                        inference_feature_list[i - 1 - len(self.decoder_channel_list)])
+                    # output = torch.cat((output, inference_feature_list[i - 2]), 1)
+                    output += inference_feature_list[i - 2 - len(self.decoder_channel_list)]
+                    output = getattr(self.decoder, "decoder_block%d_deconv" % i)(output)
+                else:
+                    output = getattr(self.decoder, "decoder_block%d" % i)(output)
+                    # output = torch.cat((output, inference_feature_list[i - 2]), 1)
+                    output = getattr(self.decoder, "decoder_block%d_deconv" % i)(output)
+            output = self.decoder.final_process(output)
+            output = torch.sigmoid(F.interpolate(output, size=self.img_size, mode='bilinear', align_corners=True))
         return output
 
     @staticmethod
@@ -277,3 +290,17 @@ class DenseUnetHiearachicalVAE(nn.Module):
             channel_number_list[-1] = int(channel_number_list[-1] / compression)
         return channel_number_list
 
+
+if __name__ == "__main__":
+    import os
+
+    os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+    network = DenseUnetHiearachicalVAE(latent_dim=[8, 8])
+    network = network.cuda()
+    input_data = torch.randn(1, 1, 368, 464)
+    input_data = input_data.cuda()
+    reconstruct_img, latent_variable_mean_list, latent_variable_sigma_list, latent_variable_log_sigma_list = network(
+        input_data)
+    print(reconstruct_img.size(), latent_variable_mean_list, latent_variable_log_sigma_list)
+    output = network.generate_from_latent_variable(z_list=latent_variable_mean_list)
+    print(output.size())
