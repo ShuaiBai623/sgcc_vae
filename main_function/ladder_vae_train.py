@@ -1,13 +1,7 @@
-"""
-different from idfe
-here we should add the test module, it is used to test if the vae
-can generate similar images and we can show it.
-which means visualize the vae(2d or 3d)
-"""
 import __init__
 import argparse
-from model import denseunet_hierarchical_vae
-from lib.Criterion import VAECriterion
+from model import ladder_vae
+from lib.Criterion import LVAECriterion
 from torch import nn
 from lib.utils.avgmeter import AverageMeter
 from lib.dataloader import SGCCDataset
@@ -71,20 +65,16 @@ parser.add_argument('--not-resume-arg', action='store_true', help='if we not res
 parser.add_argument('--test-only', action='store_true', help='test only')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
-parser.add_argument('-dp', '--data-parallel', action='store_true', help='Use Data Parallel')
 parser.add_argument('-pm', '-pretrained-resume', default='', type=str, metavar='PATH',
                     help='path to pretrained parameters (default: none)')
 # parser.add_argument('-ld', '--latent-dim', default=128, type=int,
 #                     metavar='D', help='feature dimension in latent space')
-parser.add_argument('-ld', "--latent-dim", default=[64, 64], type=arg_as_list,
+parser.add_argument('-ld', "--latent-dim", default=[8, 8], type=arg_as_list,
                     metavar='D List', help='feature dimension in latent space for each hierarchical')
 parser.add_argument('-is', "--image-size", default=[368, 464], type=arg_as_list,
                     metavar='Image Size List', help='the size of h * w for image')
-parser.add_argument('-bc', "--block-config", default=[6, 12, 24, 16], type=arg_as_list,
+parser.add_argument('-hc', "--hidden-config", default=[512, 256], type=arg_as_list,
                     metavar='Image Size List', help='the size of h * w for image')
-# This may be used later
-# parser.add_argument('--nce-m', default=0.5, type=float,
-#                     help='momentum for non-parametric updates')
 parser.add_argument('-ad', "--adjust-lr", default=[800, 1000], type=arg_as_list,
                     help="The milestone list for adjust learning rate")
 parser.add_argument('-a', '--aug-prob', default=0, type=float,
@@ -100,7 +90,7 @@ parser.add_argument('-gcv', "--gd-clip-value", default=1e4, type=float,
 parser.add_argument('-inf', '--inference-flag', action='store_true',
                     help='if do inference')
 # set GPU
-parser.add_argument("--gpu", default="0,1", type=str, metavar='GPU plans to use', help='The GPU id plans to use')
+parser.add_argument("--gpu", default="0", type=str, metavar='GPU plans to use', help='The GPU id plans to use')
 
 min_avg_train_total_loss = 1e8
 min_avg_test_total_loss = 1e8
@@ -112,25 +102,22 @@ def main():
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
     # ugly if sentence to avoid some ugly situation:
     # for we don't use args.image_size and args.block_config parameters in the first 10 train progress
-
+    model = ladder_vae.LVAE(latent_dim=args.latent_dim, img_size=args.image_size, hidden_unit_config=args.hidden_config)
+    model = model.cuda()
+    # cancel inference part
     if args.inference_flag:
         dataset_path = path.join(args.base_path, args.dataset)
         data_path_list = glob(path.join(dataset_path, "*.png"))
         train_data_path_list, test_data_path_list = multi_cross_validation(data_path_list, args.crossval_fold)
         inference(train_data_path_list=train_data_path_list, test_data_path_list=test_data_path_list)
         exit("finish inference of train time {}".format(args.train_time))
-    model = denseunet_hierarchical_vae.DenseUnetHiearachicalVAE(latent_dim=args.latent_dim,
-                                                                data_parallel=args.data_parallel,
-                                                                img_size=args.image_size,
-                                                                block_config=args.block_config)
-    model = model.cuda()
-    input("Begin the {} time's training".format(args.train_time))
-    criterion = VAECriterion(x_sigma=args.x_sigma).cuda()
+    input("Begin the {} time's training LVAE".format(args.train_time))
+    criterion = LVAECriterion(x_sigma=args.x_sigma).cuda()
     optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=args.momentum,
                                 weight_decay=args.weight_decay)
-    writer_log_dir = "{}/sgcc_vae/vae_runs/vae_train_time:{}_dataset:{}/fold_{}".format(args.base_path,
-                                                                                        args.train_time, args.dataset,
-                                                                                        args.crossval_fold)
+    writer_log_dir = "{}/sgcc_lvae/vae_runs/vae_train_time:{}_dataset:{}/fold_{}".format(args.base_path,
+                                                                                         args.train_time, args.dataset,
+                                                                                         args.crossval_fold)
     if args.resume:
         if os.path.isfile(args.resume):
             print("=> loading checkpoint '{}'".format(args.resume))
@@ -148,7 +135,7 @@ def main():
             raise FileNotFoundError("Checkpoint Resume File {} Not Found".format(args.resume))
     else:
         if os.path.exists(writer_log_dir):
-            flag = input("vae_train_time:{}_dataset:{}fold:{} will be removed, input yes to continue:".format(
+            flag = input("lvae_train_time:{}_dataset:{}_fold:{} will be removed, input yes to continue:".format(
                 args.train_time, args.dataset, args.crossval_fold))
             if flag == "yes":
                 shutil.rmtree(writer_log_dir, ignore_errors=True)
@@ -174,7 +161,7 @@ def main():
                                                                          writer=writer,
                                                                          dataset=args.dataset, fold=args.crossval_fold)
 
-        if (epoch + 1) % 20 == 0:
+        if (epoch + 1) % 200 == 0:
             """
             Here we define the best point as the minimum average epoch loss
             """
@@ -209,8 +196,6 @@ def main():
                 test_reconstruct(test_datalist, model=model, train_time=args.train_time, train_epoch=epoch,
                                  dataset=args.dataset,
                                  comment=comment, criterion=criterion, test_train_dset_flag=False)
-    # finally do inference
-    inference(train_data_path_list=train_data_path_list, test_data_path_list=test_data_path_list)
 
 
 def train(train_dloader, model, criterion, optimizer, epoch, writer, dataset, kl_beta, fold):
@@ -227,15 +212,11 @@ def train(train_dloader, model, criterion, optimizer, epoch, writer, dataset, kl
     for i, (image, *_) in enumerate(train_dloader):
         data_time.update(time.time() - end)
         image = image.float().cuda()
-        image_reconstructed, latent_mean_list, latent_sigma_list, latent_log_sigma_list = model(
+        image_reconstructed, q_mu_0, q_var_0, q_mu_1, q_var_1, p_mu_0, p_var_0 = model(
             image)
-        latent_mean = torch.cat(latent_mean_list, 1)
-        latent_sigma = torch.cat(latent_sigma_list, 1)
-        latent_log_sigma = torch.cat(latent_log_sigma_list, 1)
-        reconstruct_loss, kl_loss = criterion(image, image_reconstructed, latent_mean, latent_log_sigma,
-                                              latent_sigma)
+        reconstruct_loss, kl_loss = criterion(image, image_reconstructed, q_mu_0, q_var_0, q_mu_1, q_var_1, p_mu_0,
+                                              p_var_0)
         loss = reconstruct_loss + kl_beta * kl_loss
-        # loss = kl_loss
         loss.backward()
         if args.gd_clip_flag:
             torch.nn.utils.clip_grad_value_(model.parameters(), args.gd_clip_value)
@@ -299,10 +280,11 @@ def save_checkpoint(state, is_train_total_loss_best, is_test_total_loss_best,
     :param filename: the filename for store
     :return:
     """
-    filefolder = '{}/sgcc_vae/vae_parameter/train_vae_time_{}_train_dset_{}/fold_{}'.format(args.base_path,
-                                                                                            state["args"].train_time,
-                                                                                            state["args"].dataset,
-                                                                                            state["args"].crossval_fold)
+    filefolder = '{}/sgcc_lvae/vae_parameter/train_vae_time_{}_train_dset_{}/fold_{}'.format(args.base_path,
+                                                                                             state["args"].train_time,
+                                                                                             state["args"].dataset,
+                                                                                             state[
+                                                                                                 "args"].crossval_fold)
     if not path.exists(filefolder):
         os.makedirs(filefolder)
     torch.save(state, path.join(filefolder, filename))
@@ -317,13 +299,13 @@ def save_checkpoint(state, is_train_total_loss_best, is_test_total_loss_best,
 def test_reconstruct(test_datalist, model, train_time, train_epoch, dataset, comment, criterion,
                      test_train_dset_flag=False):
     if test_train_dset_flag:
-        filefolder = '{}/sgcc_vae/train_vae_time_{}_train_dset_{}/fold_{}/test_{}_epoch/train_dset/{}'.format(
+        filefolder = '{}/sgcc_lvae/train_vae_time_{}_train_dset_{}/fold_{}/test_{}_epoch/train_dset/{}'.format(
             args.base_path,
             train_time, dataset,
             args.crossval_fold,
             train_epoch, comment)
     else:
-        filefolder = '{}/sgcc_vae/train_vae_time_{}_train_dset_{}/fold_{}/test_{}_epoch/test_dset/{}'.format(
+        filefolder = '{}/sgcc_lvae/train_vae_time_{}_train_dset_{}/fold_{}/test_{}_epoch/test_dset/{}'.format(
             args.base_path,
             train_time, dataset,
             args.crossval_fold,
@@ -341,20 +323,17 @@ def test_reconstruct(test_datalist, model, train_time, train_epoch, dataset, com
             os.makedirs(save_path)
         image = image.float().cuda()
         with torch.no_grad():
-            image_multi_reconstructed, image_multi_mean_list, image_multi_sigma_list, image_multi_log_sigma_list = model.generate_from_raw_img(
+            image_multi_reconstructed, multi_q_mu_0, multi_q_var_0, multi_q_mu_1, multi_q_var_1, multi_p_mu_0, multi_p_var_0 = model.generate_from_raw_img(
                 input_img=image, generate_times=10)
         """
         change criterion functions
         """
         for j in range(10):
-            image_mean_list = [mu[j:j + 1, :] for mu in image_multi_mean_list]
-            image_sigma_list = [sigma[j:j + 1, :] for sigma in image_multi_sigma_list]
-            image_log_sigma_list = [log_sigma[j:j + 1, :] for log_sigma in image_multi_log_sigma_list]
-            z_mean = torch.cat(image_mean_list, 1)
-            z_sigma = torch.cat(image_sigma_list, 1)
-            z_log_sigma = torch.cat(image_log_sigma_list, 1)
-            reconstruct_loss, kl_loss = criterion(image, image_multi_reconstructed[j:j + 1, :], z_mean, z_log_sigma,
-                                                  z_sigma)
+            reconstruct_loss, kl_loss = criterion(image, image_multi_reconstructed[j:j + 1, :],
+                                                  multi_q_mu_0[j:j + 1, :],
+                                                  multi_q_var_0[j:j + 1, :], multi_q_mu_1[j:j + 1, :],
+                                                  multi_q_var_1[j:j + 1, :], multi_p_mu_0[j:j + 1, :],
+                                                  multi_p_var_0[j:j + 1, :])
             save_file = path.join(save_path,
                                   "reconstruct_{}_rcl_{:.4f}_kl{:.4f}.npy".format(j, float(reconstruct_loss),
                                                                                   float(kl_loss)))
@@ -372,13 +351,10 @@ def test_loss(test_dloader, model, criterion, epoch, writer, dataset, fold):
     for i, (image, *_) in enumerate(test_dloader):
         image = image.float().cuda()
         with torch.no_grad():
-            image_reconstructed, latent_mean_list, latent_sigma_list, latent_log_sigma_list = model(
+            image_reconstructed, q_mu_0, q_var_0, q_mu_1, q_var_1, p_mu_0, p_var_0 = model(
                 image)
-        latent_mean = torch.cat(latent_mean_list, 1)
-        latent_sigma = torch.cat(latent_sigma_list, 1)
-        latent_log_sigma = torch.cat(latent_log_sigma_list, 1)
-        reconstruct_loss, kl_loss = criterion(image, image_reconstructed, latent_mean, latent_log_sigma,
-                                              latent_sigma)
+        reconstruct_loss, kl_loss = criterion(image, image_reconstructed, q_mu_0, q_var_0, q_mu_1, q_var_1, p_mu_0,
+                                              p_var_0)
         loss = reconstruct_loss + kl_loss
         losses.update(float(loss), image.size(0))
         reconstruct_losses.update(float(reconstruct_loss), image.size(0))
@@ -394,25 +370,24 @@ def test_loss(test_dloader, model, criterion, epoch, writer, dataset, fold):
 def inference(train_data_path_list, test_data_path_list, folder_path=None, resume_test_best=True,
               pattern_folder_path=None):
     if folder_path is None:
-        folder_path = '{}/sgcc_vae/vae_inference'.format(args.base_path)
+        folder_path = '{}/sgcc_lvae/vae_inference'.format(args.base_path)
         folder_path = os.path.join(folder_path,
                                    "train_time_{}_dset_{}/fold_{}".format(args.train_time, args.dataset,
                                                                           args.crossval_fold))
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
     if resume_test_best:
-        resume_path = "{}/sgcc_vae/vae_parameter/train_vae_time_{}_train_dset_{}/fold_{}/model_test_total_loss_best.pth.tar".format(
+        resume_path = "{}/sgcc_lvae/vae_parameter/train_vae_time_{}_train_dset_{}/fold_{}/model_test_total_loss_best.pth.tar".format(
             args.base_path, args.train_time, args.dataset, args.crossval_fold)
     else:
-        resume_path = "{}/sgcc_vae/vae_parameter/train_vae_time_{}_train_dset_{}/fold_{}/model_train_total_loss_best.pth.tar".format(
+        resume_path = "{}/sgcc_lvae/vae_parameter/train_vae_time_{}_train_dset_{}/fold_{}/model_train_total_loss_best.pth.tar".format(
             args.base_path, args.train_time, args.dataset, args.crossval_fold)
     if os.path.isfile(resume_path):
         print("=> loading checkpoint '{}'".format(resume_path))
         checkpoint = torch.load(resume_path)
-        model = denseunet_hierarchical_vae.DenseUnetHiearachicalVAE(latent_dim=checkpoint["args"].latent_dim,
-        data_parallel=checkpoint["args"].data_parallel,
-        img_size=checkpoint["args"].image_size,
-        block_config=checkpoint["args"].block_config).cuda()
+        model = ladder_vae.LVAE(latent_dim=checkpoint["args"].latent_dim, img_size=checkpoint["args"].image_size,
+                                hidden_unit_config=checkpoint["args"].hidden_config)
+        model = model.cuda()
         model.load_state_dict(checkpoint['state_dict'])
         model = model.eval()
         print("=> loaded checkpoint '{}' (epoch {})"
@@ -429,9 +404,9 @@ def inference(train_data_path_list, test_data_path_list, folder_path=None, resum
     for i, (image, index, img_name, *_) in enumerate(train_data_loader):
         image = image.float().cuda()
         img_name, *_ = img_name
-        _, all_latent_variable_mean, all_latent_variable_sigma, all_latent_variable_log_sigma = model(image)
-        mu_list = [mu.cpu().detach().numpy() for mu in all_latent_variable_mean]
-        log_sigma_list = [log_sigma.cpu().detach().numpy() for log_sigma in all_latent_variable_log_sigma]
+        _, q_mu_0, q_var_0, q_mu_1, q_var_1, p_mu_0, p_var_0 = model(image)
+        mu_list = [q_mu_0.cpu().detach().numpy(), q_mu_1.cpu().detach().numpy()]
+        log_sigma_list = [np.log(q_var_0.cpu().detach().numpy())/2, np.log(q_var_1.cpu().detach().numpy())/2]
         inference_dict[img_name] = {"mu": mu_list, "log_sigma": log_sigma_list}
         print("{} inferenced".format(img_name))
     with open(path.join(folder_path, "train.pkl"), "wb") as train_pkl:
@@ -445,9 +420,9 @@ def inference(train_data_path_list, test_data_path_list, folder_path=None, resum
     for i, (image, index, img_name, *_) in enumerate(test_data_loader):
         image = image.float().cuda()
         img_name, *_ = img_name
-        _, all_latent_variable_mean, all_latent_variable_sigma, all_latent_variable_log_sigma = model(image)
-        mu_list = [mu.cpu().detach().numpy() for mu in all_latent_variable_mean]
-        log_sigma_list = [log_sigma.cpu().detach().numpy() for log_sigma in all_latent_variable_log_sigma]
+        _, q_mu_0, q_var_0, q_mu_1, q_var_1, p_mu_0, p_var_0 = model(image)
+        mu_list = [q_mu_0.cpu().detach().numpy(), q_mu_1.cpu().detach().numpy()]
+        log_sigma_list = [np.log(q_var_0.cpu().detach().numpy())/2, np.log(q_var_1.cpu().detach().numpy())/2]
         inference_dict[img_name] = {"mu": mu_list, "log_sigma": log_sigma_list}
         print("{} inferenced".format(img_name))
     with open(path.join(folder_path, "test.pkl"), "wb") as test_pkl:
@@ -464,9 +439,9 @@ def inference(train_data_path_list, test_data_path_list, folder_path=None, resum
     for i, (image, index, img_name, *_) in enumerate(pattern_data_loader):
         image = image.float().cuda()
         img_name, *_ = img_name
-        _, all_latent_variable_mean, all_latent_variable_sigma, all_latent_variable_log_sigma = model(image)
-        mu_list = [mu.cpu().detach().numpy() for mu in all_latent_variable_mean]
-        log_sigma_list = [log_sigma.cpu().detach().numpy() for log_sigma in all_latent_variable_log_sigma]
+        _, q_mu_0, q_var_0, q_mu_1, q_var_1, p_mu_0, p_var_0 = model(image)
+        mu_list = [q_mu_0.cpu().detach().numpy(), q_mu_1.cpu().detach().numpy()]
+        log_sigma_list = [np.log(q_var_0.cpu().detach().numpy())/2, np.log(q_var_1.cpu().detach().numpy())/2]
         inference_dict[img_name] = {"mu": mu_list, "log_sigma": log_sigma_list}
         print("{} inferenced".format(img_name))
     with open(path.join(folder_path, "pattern.pkl"), "wb") as pattern_pkl:

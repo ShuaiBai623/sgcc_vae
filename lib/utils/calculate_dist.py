@@ -2,6 +2,14 @@ import numpy as np
 import torch
 
 
+def gaussian_wd_calculation(u1, u2, log_sigma1, log_sigma2, diagflag=True):
+    if diagflag:
+        wd = np.sum((u1 - u2) ** 2) + np.sum((np.exp(log_sigma1) - np.exp(log_sigma2)) ** 2)
+        return wd
+    else:
+        raise NotImplementedError("No diag covariance matrix not implemented")
+
+
 def gaussian_kl_calculation(u1, u2, log_sigma1, log_sigma2, diag1flag=True, diag2flag=True):
     """
     The calculation method is follow https://fenghz.github.io/KL-Divergency-Description/
@@ -81,6 +89,45 @@ def gaussian_kl_calculation_vec_pairwise(u1, log_sigma1, u2, log_sigma2, GPU_fla
         kl = (1 / 2) * (-1 * np.sum(np.log(s_pairwise), axis=2) + np.sum(s_pairwise, axis=2) +
                         np.sum(u_pairwise, axis=2) - d)
     return kl
+
+
+def pairwise_norm_kl_dist_gpu(u1, log_sigma1, u2, log_sigma2):
+    """
+    :param u1: torch tensor with n1*k-dim
+    :param log_sigma1: torch tensor with n1*k-dim
+    :param u2: torch tensor with n2*k-dim
+    :param log_sigma2: torch tensor with n2*k-dim
+    :return: n1*n2 kl dist , [i,j] = kl[(u1[i,:],log_sigma1[i,:]||u2[j,:],(log_sigma[j,:])]
+    """
+    d = log_sigma1.size(1)
+    s_pairwise = torch.unsqueeze(torch.exp(log_sigma1) ** 2, 1) / torch.unsqueeze(torch.exp(log_sigma2) ** 2, 0)
+    u_pairwise = (torch.unsqueeze(u1, 1) - torch.unsqueeze(u2, 0)) ** 2 / torch.unsqueeze(torch.exp(log_sigma2) ** 2, 0)
+    kl = (1 / 2) * (-1 * torch.sum(torch.log(s_pairwise), dim=2) +
+                    torch.sum(s_pairwise, dim=2) + torch.sum(u_pairwise, dim=2) - d)
+    return kl
+
+
+def pairwise_square_euclidean_gpu(v1, v2):
+    """
+    :param v1: n1*m size vector
+    :param v2: n2*m size vector
+    :return: n1*n2 matrix, [i,j] represents euclidean distance (v1[i,:],v2[j,:])
+    """
+    euclidean_dist = torch.sum((v1.unsqueeze(1) - v2.unsqueeze(0)) ** 2, dim=2)
+    return euclidean_dist
+
+
+def pairwise_norm_wasserstein_dist_gpu(u1, log_sigma1, u2, log_sigma2):
+    """
+    :param u1: n1*m size vector
+    :param log_sigma1: n1*m size vector
+    :param u2: n2*m size vector
+    :param log_sigma2: n2*m size vector
+    :return: n1*n2 matrix, [i,j] represents the wassterstein disctance for (u1[i:,],sigma1[i,:]), (u2[j,:],sigma2[j,:])
+    """
+    wd = pairwise_square_euclidean_gpu(u1, u2) + pairwise_square_euclidean_gpu(torch.exp(log_sigma1),
+                                                                               torch.exp(log_sigma2))
+    return wd
 
 
 def calculate_mean_dist_pairwise(u1, u2, GPU_flag=False, distance="euclidean"):

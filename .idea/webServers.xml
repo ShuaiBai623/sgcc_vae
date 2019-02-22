@@ -18,6 +18,22 @@
           <option name="port" value="22" />
         </fileTransfer>
       </webServer>
+      <webServer id="92b7f46d-38a9-460a-8f3b-e8d9bf497db5" name="realdoctor1" url="http://47.107.122.103">
+        <fileTransfer host="47.107.122.103" port="19215" rootFolder="/home/fhz/sgcc_vae" accessType="SFTP">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" shareSSLContext="true" />
+          </advancedOptions>
+          <option name="port" value="19215" />
+        </fileTransfer>
+      </webServer>
+      <webServer id="50ba3cfd-19fc-463c-b62c-0ac1a2c351bd" name="realdoctor2" url="http://47.107.122.103">
+        <fileTransfer host="47.107.122.103" port="24222" rootFolder="/home/feng/sgcc_vae" accessType="SFTP">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" shareSSLContext="true" />
+          </advancedOptions>
+          <option name="port" value="24222" />
+        </fileTransfer>
+      </webServer>
     </option>
   </component>
 </project>

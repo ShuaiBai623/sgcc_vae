@@ -179,7 +179,11 @@ class HVAEInference(DenseUnetHiearachicalVAE):
             z_sample = z_sample.cuda()
         z_sample_list = self._split_sample_into_hierarchical_list(z_sample)
         reconstruct = self.generate_from_latent_variable(z_sample_list)
-        return reconstruct.squeeze().cpu().detach().numpy()
+        batch_size = reconstruct.size(0)
+        reconstruct = reconstruct.squeeze()
+        if batch_size == 1:
+            reconstruct = reconstruct.unsqueeze(0)
+        return reconstruct.cpu().detach().numpy()
 
     def _split_sample_into_hierarchical_list(self, z_sample):
         z_sample_list = []

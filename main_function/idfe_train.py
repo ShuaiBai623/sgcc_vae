@@ -102,15 +102,16 @@ def main():
     global args, min_avgloss
     args = parser.parse_args()
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
-    model = idfe.IdFe2d(latent_dim=args.latent_dim, data_parallel=args.data_parallel,
-                        img_size=args.image_size, block_config=args.block_config)
-    model = model.cuda()
+
     if args.inference_flag:
         dataset_path = path.join(args.base_path, args.dataset)
         data_path_list = glob(path.join(dataset_path, "*.png"))
         train_data_path_list, test_data_path_list = multi_cross_validation(data_path_list, args.crossval_fold)
-        inference(model=model, train_data_path_list=train_data_path_list, test_data_path_list=test_data_path_list)
+        inference(train_data_path_list=train_data_path_list, test_data_path_list=test_data_path_list)
         exit("finish inference of train time {}".format(args.train_time))
+    model = idfe.IdFe2d(latent_dim=args.latent_dim, data_parallel=args.data_parallel,
+                        img_size=args.image_size, block_config=args.block_config)
+    model = model.cuda()
     input("Begin the {} time's training".format(args.train_time))
     optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=args.momentum,
                                 weight_decay=args.weight_decay)
@@ -144,7 +145,7 @@ def main():
     else:
         if os.path.exists(writer_log_dir):
             flag = input("idfe_train_time:{}_dataset:{}fold:{} will be removed, input yes to continue:".format(
-                args.train_time, args.dataset,args.crossval_fold))
+                args.train_time, args.dataset, args.crossval_fold))
             if flag == "yes":
                 shutil.rmtree(writer_log_dir, ignore_errors=True)
     writer = SummaryWriter(log_dir=writer_log_dir)
@@ -152,7 +153,7 @@ def main():
         adjust_learning_rate(optimizer, epoch)
         epoch_loss = train(train_dloader, model=model, lemniscate=lemniscate, criterion=criterion,
                            optimizer=optimizer, epoch=epoch, writer=writer,
-                           dataset=args.dataset,fold=args.crossval_fold)
+                           dataset=args.dataset, fold=args.crossval_fold)
         if (epoch + 1) % 20 == 0:
             """
             Here we define the best point as the minimum average epoch loss
@@ -169,7 +170,7 @@ def main():
             }, is_best)
 
 
-def train(train_dloader, model, lemniscate, criterion, optimizer, epoch, writer, dataset,fold):
+def train(train_dloader, model, lemniscate, criterion, optimizer, epoch, writer, dataset, fold):
     # record the time for loading a data and do backward for a batch
     # also record the loss value
     batch_time = AverageMeter()
@@ -198,7 +199,7 @@ def train(train_dloader, model, lemniscate, criterion, optimizer, epoch, writer,
             train_text = 'Epoch: [{0}][{1}/{2}]\t' \
                          'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t' \
                          'Data {data_time.val:.3f} ({data_time.avg:.3f})\t' \
-                         'Loss {total_loss.val:.4f} ({total_loss.avg:.4f})\t'.format(epoch, i+1, len(train_dloader),
+                         'Loss {total_loss.val:.4f} ({total_loss.avg:.4f})\t'.format(epoch, i + 1, len(train_dloader),
                                                                                      batch_time=batch_time,
                                                                                      data_time=data_time,
                                                                                      total_loss=losses)
@@ -236,9 +237,11 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     :param filename: the filename for store
     :return:
     """
-    filefolder = '{}/sgcc_idfe/idfe_parameter/train_idfe_time_{}_\
-    train_dset_{}/fold_{}'.format(state["args"].base_path, state["args"].train_time, state["args"].dataset,
-                                  state["args"].crossval_fold)
+    filefolder = '{}/sgcc_idfe/idfe_parameter/train_idfe_time_{}_train_dset_{}/fold_{}'.format(state["args"].base_path,
+                                                                                               state["args"].train_time,
+                                                                                               state["args"].dataset,
+                                                                                               state[
+                                                                                                   "args"].crossval_fold)
     if not path.exists(filefolder):
         os.makedirs(filefolder)
     torch.save(state, path.join(filefolder, filename))
@@ -247,7 +250,7 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
                         path.join(filefolder, 'model_best.pth.tar'))
 
 
-def inference(model, train_data_path_list, test_data_path_list, folder_path=None):
+def inference(train_data_path_list, test_data_path_list, folder_path=None, pattern_folder_path=None):
     if folder_path is None:
         folder_path = '{}/sgcc_idfe/idfe_inference'.format(args.base_path)
         folder_path = os.path.join(folder_path,
@@ -257,12 +260,15 @@ def inference(model, train_data_path_list, test_data_path_list, folder_path=None
         os.makedirs(folder_path)
     resume_path = "{}/sgcc_idfe/idfe_parameter/train_idfe_time_{}_train_dset_{}/fold_{}/model_best.pth.tar".format(
         args.base_path,
-        args.train_time, args.dataset,args.crossval_fold)
+        args.train_time, args.dataset, args.crossval_fold)
 
     if os.path.isfile(resume_path):
         print("=> loading checkpoint '{}'".format(resume_path))
         checkpoint = torch.load(resume_path)
+        model = idfe.IdFe2d(latent_dim=checkpoint["args"].latent_dim, data_parallel=checkpoint["args"].data_parallel,
+                            img_size=checkpoint["args"].image_size, block_config=checkpoint["args"].block_config).cuda()
         model.load_state_dict(checkpoint['state_dict'])
+
         model = model.eval()
         print("=> loaded checkpoint '{}' (epoch {})"
               .format(resume_path, checkpoint['epoch']))
@@ -297,6 +303,23 @@ def inference(model, train_data_path_list, test_data_path_list, folder_path=None
     with open(path.join(folder_path, "test.pkl"), "wb") as train_pkl:
         pickle.dump(obj=inference_dict, file=train_pkl)
         print("test dataset inferenced")
+    if pattern_folder_path is None:
+        pattern_folder_path = path.join(args.base_path, "sgcc_pattern")
+
+    pattern_data_path_list = glob(path.join(pattern_folder_path, "*.png"))
+    pattern_dataset = SGCCDataset(data_path_list=pattern_data_path_list)
+    pattern_data_loader = DataLoader(dataset=pattern_dataset, batch_size=1, shuffle=False,
+                                     num_workers=args.workers, pin_memory=True)
+    inference_dict = {}
+    for i, (image, index, img_name, *_) in enumerate(pattern_data_loader):
+        image = image.float().cuda()
+        img_name, *_ = img_name
+        feature = model(image).cpu().detach().numpy()
+        inference_dict[img_name] = {"feature": feature}
+        print("{} inferenced".format(img_name))
+    with open(path.join(folder_path, "pattern.pkl"), "wb") as pattern_pkl:
+        pickle.dump(obj=inference_dict, file=pattern_pkl)
+        print("pattern dataset inferenced")
 
 
 if __name__ == "__main__":
